@@ -1,0 +1,18 @@
+.gcloudignore
+.git
+.gitignore
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Local configuration and environment secrets
+.env
+.env.*
+.env.local
+
+# Logs
+*.log
+
+# Build outputs (they will be rebuilt inside the container)
+client/dist/
