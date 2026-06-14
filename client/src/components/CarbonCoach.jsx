@@ -1,39 +1,21 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import GlassCard from './GlassCard';
-
-/**
- * Static suggestion chips — defined outside the component to prevent
- * garbage-collection/re-allocation overhead on every render.
- * @type {string[]}
- */
-const SUGGESTION_CHIPS = [
-  "What should I change first?",
-  "How can I cut my food footprint?",
-  "Tips for lowering energy bills",
-  "Explain my recycling impact"
-];
+import useCoach from '../hooks/useCoach';
+import { COACH_SUGGESTION_CHIPS } from '../constants/ecoConstants';
 
 /**
  * CarbonCoach - Conversational AI chat widget.
- * Communicates with the backend /api/chat endpoint.
- * Falls back gracefully to offline rule-based responses when AI is unavailable.
+ * Communicates with the coach API via useCoach custom hook.
  *
  * @component
  * @param {Object} props
- * @param {Object} props.profileData - The user's full carbon profile with categories, total, and benchmark
- * @param {Array}  props.recommendations - List of current action recommendations for the user
+ * @param {Object} props.profileData - The user's carbon profile
+ * @param {Array<Object>} props.recommendations - Recommended action items
  * @returns {React.ReactElement}
  */
 export default function CarbonCoach({ profileData, recommendations }) {
-  const [messages, setMessages] = useState([
-    {
-      sender: 'coach',
-      text: "Hello! I'm your AI Carbon Coach. I have analyzed your carbon profile and recommendations. Ask me anything—for instance, 'What should I prioritize first?' or 'How can I reduce my home energy impact?'",
-      timestamp: new Date()
-    }
-  ]);
+  const { messages, loading, handleSend } = useCoach(profileData, recommendations);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
   const chatEndRef = useRef(null);
 
   // Auto scroll to latest message
@@ -42,68 +24,31 @@ export default function CarbonCoach({ profileData, recommendations }) {
   }, [messages, loading]);
 
   /**
-   * Sends a user question to the AI Carbon Coach API endpoint.
-   * Falls back to an inline error message if the request fails.
-   * @param {string} [questionText] - Optional pre-filled question text (from suggestion chips)
+   * Handles user submission on button click or chip selection.
+   *
+   * @param {string} [questionText] - Preset text from suggestion chips
    */
-  const handleSend = useCallback(async (questionText) => {
+  const onSubmit = useCallback((questionText) => {
     const query = questionText || input.trim();
     if (!query) return;
 
     if (!questionText) {
       setInput('');
     }
-
-    const userMsg = { sender: 'user', text: query, timestamp: new Date() };
-    setMessages(prev => [...prev, userMsg]);
-    setLoading(true);
-
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userQuestion: query,
-          profileData,
-          recommendations
-        })
-      });
-
-      const data = await response.json();
-      
-      if (response.ok && data.reply) {
-        setMessages(prev => [...prev, { sender: 'coach', text: data.reply, timestamp: new Date() }]);
-      } else {
-        throw new Error(data.error || 'Coach is offline.');
-      }
-    } catch (err) {
-      console.error('Coach Chat Error:', err);
-      setMessages(prev => [
-        ...prev, 
-        { 
-          sender: 'coach', 
-          text: "I'm having a little trouble connecting to my AI core. For travel: prioritize active transit or public transit. For diet: try adding a meatless day. What else can I help with?", 
-          timestamp: new Date() 
-        }
-      ]);
-    } finally {
-      setLoading(false);
-    }
-  }, [input, profileData, recommendations]);
+    handleSend(query);
+  }, [input, handleSend]);
 
   /**
-   * Handles Enter key press in the text input to submit a question.
-   * @param {React.KeyboardEvent} e - The keyboard event
+   * Handles Enter key presses on the input box.
    */
   const handleKeyPress = useCallback((e) => {
     if (e.key === 'Enter') {
-      handleSend();
+      onSubmit();
     }
-  }, [handleSend]);
+  }, [onSubmit]);
 
   /**
-   * Updates the input field state on every change.
-   * @param {React.ChangeEvent<HTMLInputElement>} e - The change event
+   * Updates input state value.
    */
   const handleInputChange = useCallback((e) => {
     setInput(e.target.value);
@@ -176,13 +121,13 @@ export default function CarbonCoach({ profileData, recommendations }) {
         <div ref={chatEndRef} />
       </div>
 
-      {/* Suggestion Chips — shown only before first user message */}
+      {/* Suggestion Chips */}
       {messages.length === 1 && !loading && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
-          {SUGGESTION_CHIPS.map((chip, idx) => (
+          {COACH_SUGGESTION_CHIPS.map((chip, idx) => (
             <button 
               key={idx}
-              onClick={() => handleSend(chip)}
+              onClick={() => onSubmit(chip)}
               className="btn btn-secondary"
               style={{ 
                 padding: '6px 12px', 
@@ -220,7 +165,7 @@ export default function CarbonCoach({ profileData, recommendations }) {
           }}
         />
         <button 
-          onClick={() => handleSend()}
+          onClick={() => onSubmit()}
           disabled={loading || !input.trim()}
           className="btn btn-primary"
           style={{ 

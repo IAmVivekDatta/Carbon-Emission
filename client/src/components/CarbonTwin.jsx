@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { EMISSION_THRESHOLDS } from '../constants/ecoConstants';
 
 /**
  * CarbonTwin - A visual nature ecosystem reflecting the user's carbon score.
@@ -6,9 +7,9 @@ import React, { useMemo } from 'react';
  * Uses useMemo to derive visual parameters only when state changes.
  *
  * Emission states:
- * - Low  (≤ 350 kg/mo): Vibrant green landscape, clean sky, flowing river, birds, bright sun.
- * - Medium (351–700 kg/mo): Hazy warm sky, fewer trees, calmer river, fewer birds, dim sun.
- * - High (> 700 kg/mo): Grey sky, bare dry trees, murky stagnant river, no birds, obscured sun.
+ * - Low  (≤ EMISSION_THRESHOLDS.LOW): Vibrant green landscape, clean sky, flowing river, birds, bright sun.
+ * - Medium (LOW to MEDIUM): Hazy warm sky, fewer trees, calmer river, fewer birds, dim sun.
+ * - High (> EMISSION_THRESHOLDS.MEDIUM): Grey sky, bare dry trees, murky stagnant river, no birds, obscured sun.
  *
  * @component
  * @param {Object} props
@@ -18,8 +19,8 @@ import React, { useMemo } from 'react';
 function CarbonTwin({ emissions = 400 }) {
   // Derive state threshold — only recalculate when emissions changes
   const state = useMemo(() => {
-    if (emissions <= 350) return 'low';
-    if (emissions <= 700) return 'medium';
+    if (emissions <= EMISSION_THRESHOLDS.LOW) return 'low';
+    if (emissions <= EMISSION_THRESHOLDS.MEDIUM) return 'medium';
     return 'high';
   }, [emissions]);
 

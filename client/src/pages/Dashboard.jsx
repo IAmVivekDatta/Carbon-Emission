@@ -1,14 +1,25 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import GlassCard from '../components/GlassCard';
 import LeafDivider from '../components/LeafDivider';
-import ProgressBar from '../components/ProgressBar';
 import CarbonTwin from '../components/CarbonTwin';
 import CarbonCoach from '../components/CarbonCoach';
+import TrendChart from '../components/TrendChart';
+import CategoryBreakdown from '../components/CategoryBreakdown';
+import WeeklyChallenges from '../components/WeeklyChallenges';
+import ActionPlan from '../components/ActionPlan';
+
+// Custom Hooks
+import useChallenges from '../hooks/useChallenges';
+import useRecommendations from '../hooks/useRecommendations';
+
+// Utilities
+import { calculateSavings, calculateChallengeSavings, deriveImpactEquivalent } from '../utils/calculations';
+import { roundToOneDecimal, formatNumber } from '../utils/formatters';
 
 /**
  * Premium Eco-friendly Dashboard & behaviour-change platform.
- * Integrates Carbon Twin ecosystem, AI Coach, Weekly Challenges, Action Plans, and Impact Stories.
- * Uses useMemo heavily to avoid re-computing derived values on every render.
+ * Orchestrates subcomponents: Carbon Twin, AI Coach, Trend Chart, Category breakdown, and lists.
+ * Utilizes custom hooks for network calls and logic separation.
  *
  * @component
  * @param {Object}   props
@@ -25,68 +36,29 @@ import CarbonCoach from '../components/CarbonCoach';
 export default function Dashboard({ 
   profileData, 
   onLogAction, 
-  completedActions = {}, 
-  completedChallenges = {},
-  onToggleChallenge,
-  joinedChallenges = {},
-  onJoinChallenge,
+  completedActions = {},
   streak = 0 
 }) {
   const { categories, total, benchmark, inputs } = profileData;
-  const [recommendations, setRecommendations] = useState([]);
-  const [challenges, setChallenges] = useState([]);
-  const [loadingRecs, setLoadingRecs] = useState(true);
-  const [loadingChallenges, setLoadingChallenges] = useState(true);
   const [loggedToday, setLoggedToday] = useState(completedActions);
 
-  // Fetch recommendations from API
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchRecs() {
-      try {
-        const response = await fetch('/api/recommendations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ categories, inputs })
-        });
-        const data = await response.json();
-        if (!cancelled && response.ok && data.recommendations) {
-          setRecommendations(data.recommendations);
-        }
-      } catch (err) {
-        console.error('Error fetching recommendations:', err);
-      } finally {
-        if (!cancelled) setLoadingRecs(false);
-      }
-    }
-    fetchRecs();
-    return () => { cancelled = true; };
-  }, [categories, inputs]);
+  // Consume custom hooks for challenges and recommendations
+  const {
+    challenges,
+    loadingChallenges,
+    joinedChallenges,
+    completedChallenges,
+    handleJoinChallenge,
+    handleToggleChallenge
+  } = useChallenges();
 
-  // Fetch weekly challenges from API
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchChallenges() {
-      try {
-        const response = await fetch('/api/challenges');
-        const data = await response.json();
-        if (!cancelled && response.ok && data.challenges) {
-          setChallenges(data.challenges);
-        }
-      } catch (err) {
-        console.error('Error fetching challenges:', err);
-      } finally {
-        if (!cancelled) setLoadingChallenges(false);
-      }
-    }
-    fetchChallenges();
-    return () => { cancelled = true; };
-  }, []);
+  const {
+    recommendations,
+    loadingRecs
+  } = useRecommendations(categories, inputs);
 
   /**
    * Toggles an action's logged state locally and propagates to App state.
-   * @param {string} actionId - The recommendation ID to toggle
-   * @param {number} savings  - Estimated CO2 savings for this action
    */
   const handleToggleAction = useCallback((actionId, savings) => {
     const isNowLogged = !loggedToday[actionId];
@@ -95,37 +67,25 @@ export default function Dashboard({
     onLogAction(actionId, isNowLogged, savings);
   }, [loggedToday, onLogAction]);
 
-  // ── Derived savings ──────────────────────────────────────────────────────────
+  // ── Derived savings & emissions ──────────────────────────────────────────────
 
-  /** Total CO2 savings from logged action plan items */
   const totalSavingsLogged = useMemo(() =>
-    Object.entries(loggedToday)
-      .filter(([_, logged]) => logged)
-      .reduce((sum, [id]) => {
-        const rec = recommendations.find(r => r.id === id);
-        return sum + (rec ? rec.estimatedSavings : 0);
-      }, 0),
+    calculateSavings(loggedToday, recommendations),
     [loggedToday, recommendations]
   );
 
-  /** Total CO2 savings from completed weekly challenges */
   const totalSavingsFromChallenges = useMemo(() =>
-    Object.entries(completedChallenges)
-      .filter(([_, completed]) => completed)
-      .reduce((sum, [id]) => {
-        const chal = challenges.find(c => c.id === id);
-        return sum + (chal ? chal.co2Savings : 0);
-      }, 0),
+    calculateChallengeSavings(completedChallenges, challenges),
     [completedChallenges, challenges]
   );
 
   const totalEmissionsSaved = useMemo(() =>
-    Math.round((totalSavingsLogged + totalSavingsFromChallenges) * 10) / 10,
+    roundToOneDecimal(totalSavingsLogged + totalSavingsFromChallenges),
     [totalSavingsLogged, totalSavingsFromChallenges]
   );
 
   const currentEmissions = useMemo(() =>
-    Math.max(0, Math.round((total - totalEmissionsSaved) * 10) / 10),
+    Math.max(0, roundToOneDecimal(total - totalEmissionsSaved)),
     [total, totalEmissionsSaved]
   );
 
@@ -136,13 +96,10 @@ export default function Dashboard({
 
   // ── Impact Story Equivalents ─────────────────────────────────────────────────
 
-  const { carKms, treeDays, phoneCharges } = useMemo(() => ({
-    carKms:       Math.round(totalEmissionsSaved * 5.88 * 10) / 10,
-    treeDays:     Math.round(totalEmissionsSaved * 16.5),
-    phoneCharges: Math.round(totalEmissionsSaved * 120)
-  }), [totalEmissionsSaved]);
-
-  // ── Earned Challenge Badges ──────────────────────────────────────────────────
+  const { carKms, treeDays, phoneCharges } = useMemo(() =>
+    deriveImpactEquivalent(totalEmissionsSaved),
+    [totalEmissionsSaved]
+  );
 
   const earnedBadges = useMemo(() =>
     challenges.filter(c => completedChallenges[c.id]).map(c => c.badge),
@@ -167,53 +124,6 @@ export default function Dashboard({
     if (maxCategory[0] === 'homeEnergy') return `${leadText} Simple household thermal modifications (like checking insulation and adjusting thermostat settings by 1°C) will deliver substantial immediate grid savings.`;
     return `${leadText} Embracing the repair of tools/clothing and composting organic food scraps will prevent methane buildup in landfills.`;
   }, [categories, total]);
-
-  // ── SVG Trend Chart Data ─────────────────────────────────────────────────────
-
-  const { pathD, areaD, points, benchmarkY } = useMemo(() => {
-    const chartWidth = 500;
-    const chartHeight = 180;
-    const paddingX = 40;
-    const paddingY = 25;
-
-    const weekData = [
-      { label: 'Base', val: total },
-      { label: 'Wk 1', val: Math.round((total * 0.98) * 10) / 10 },
-      { label: 'Wk 2', val: Math.round((total * 0.96) * 10) / 10 },
-      { label: 'Wk 3', val: Math.round((total * 0.94) * 10) / 10 },
-      { label: 'Wk 4', val: Math.round((total * 0.92) * 10) / 10 },
-      { label: 'Now',  val: currentEmissions }
-    ];
-
-    const maxVal = Math.max(...weekData.map(d => d.val), benchmark) * 1.1;
-    const minVal = Math.min(...weekData.map(d => d.val)) * 0.8;
-
-    const pts = weekData.map((d, index) => {
-      const x = paddingX + (index * (chartWidth - 2 * paddingX) / (weekData.length - 1));
-      const y = chartHeight - paddingY - ((d.val - minVal) * (chartHeight - 2 * paddingY) / (maxVal - minVal));
-      return { x, y, ...d };
-    });
-
-    const path = pts.reduce((p, pt, i) => i === 0 ? `M ${pt.x} ${pt.y}` : `${p} L ${pt.x} ${pt.y}`, '');
-    const area = `${path} L ${pts[pts.length - 1].x} ${chartHeight - paddingY} L ${pts[0].x} ${chartHeight - paddingY} Z`;
-    const bmY  = chartHeight - paddingY - ((benchmark - minVal) * (chartHeight - 2 * paddingY) / (maxVal - minVal));
-
-    return {
-      pathD: path,
-      areaD: area,
-      points: pts,
-      benchmarkY: bmY,
-      chartWidth,
-      chartHeight,
-      paddingX,
-      paddingY
-    };
-  }, [total, currentEmissions, benchmark]);
-
-  const chartWidth = 500;
-  const chartHeight = 180;
-  const paddingX = 40;
-  const paddingY = 25;
 
   return (
     <main className="container section animate-fade" id="main-content" style={{ padding: '40px 24px' }}>
@@ -251,7 +161,7 @@ export default function Dashboard({
               Target benchmark: {benchmark} kg/mo. You are emitting <strong>{currentPercentOfBenchmark}%</strong> of the target.
             </p>
 
-            {/* Impact Stories (Feature 4) */}
+            {/* Impact Stories */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <h4 style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--green-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                 Real-World Impact
@@ -272,14 +182,14 @@ export default function Dashboard({
                   </li>
                   <li style={{ display: 'flex', gap: '8px', fontSize: '0.9rem', alignItems: 'center' }}>
                     <span style={{ fontSize: '1.1rem' }}>🔌</span>
-                    <span>Equivalent to charging a smartphone <strong>{phoneCharges.toLocaleString()} times</strong>.</span>
+                    <span>Equivalent to charging a smartphone <strong>{formatNumber(phoneCharges)} times</strong>.</span>
                   </li>
                 </ul>
               )}
             </div>
           </div>
 
-          {/* Achievements / Badges (Feature 3) */}
+          {/* Achievements / Badges */}
           {earnedBadges.length > 0 && (
             <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border-light)' }}>
               <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--gold-hover)', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
@@ -307,64 +217,13 @@ export default function Dashboard({
         </GlassCard>
       </section>
 
-      {/* MID ROW: Category breakdown, SVG chart, and AI Carbon Coach */}
+      {/* MID ROW: Category breakdown, Trend Chart, and AI Coach */}
       <section className="grid grid-2" style={{ marginBottom: '32px', alignItems: 'stretch' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          {/* Category Progress Bars */}
-          <GlassCard leafCorner={false} padding="24px">
-            <h2 style={{ fontSize: '1.25rem', marginBottom: '16px', color: 'var(--green-primary)' }}>Emissions by Category</h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {[
-                { emoji: '🚘', label: 'Commute & Travel', value: categories.commute },
-                { emoji: '🥗', label: 'Diet & Food',      value: categories.diet },
-                { emoji: '⚡', label: 'Home Energy',       value: categories.homeEnergy },
-                { emoji: '🛍️', label: 'Shopping & Consumables', value: categories.shopping },
-                { emoji: '🗑️', label: 'Waste & Compost',  value: categories.waste }
-              ].map(({ emoji, label, value }) => (
-                <div key={label}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '4px' }}>
-                    <span>{emoji} {label}</span>
-                    <span style={{ fontWeight: '600' }}>{value} kg</span>
-                  </div>
-                  <ProgressBar value={value} max={total} height="6px" />
-                </div>
-              ))}
-            </div>
-          </GlassCard>
-
-          {/* SVG Trend Chart */}
-          <GlassCard leafCorner={false} padding="24px">
-            <h2 style={{ fontSize: '1.25rem', marginBottom: '12px', color: 'var(--green-primary)' }}>Emissions Reduction Trend</h2>
-            <div style={{ width: '100%' }}>
-              <svg 
-                viewBox={`0 0 ${chartWidth} ${chartHeight}`} 
-                style={{ width: '100%', height: 'auto' }}
-                aria-label="Emissions reduction graph from baseline to current"
-              >
-                <defs>
-                  <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--green-medium)" stopOpacity="0.25" />
-                    <stop offset="100%" stopColor="var(--green-medium)" stopOpacity="0.00" />
-                  </linearGradient>
-                </defs>
-                <line x1={paddingX} y1={chartHeight - paddingY} x2={chartWidth - paddingX} y2={chartHeight - paddingY} stroke="var(--border-light)" strokeWidth="1" />
-                <line x1={paddingX} y1={paddingY} x2={chartWidth - paddingX} y2={paddingY} stroke="var(--border-light)" strokeWidth="0.5" strokeDasharray="3" />
-                <line x1={paddingX} y1={benchmarkY} x2={chartWidth - paddingX} y2={benchmarkY} stroke="var(--gold-primary)" strokeWidth="1.2" strokeDasharray="4 4" />
-                <path d={areaD} fill="url(#chartGradient)" />
-                <path d={pathD} fill="none" stroke="var(--green-medium)" strokeWidth="2.5" strokeLinecap="round" />
-                {points.map((p, i) => (
-                  <g key={i}>
-                    <circle cx={p.x} cy={p.y} r="4" fill="var(--bg-primary)" stroke="var(--green-light)" strokeWidth="2" />
-                    <text x={p.x} y={p.y - 10} textAnchor="middle" fontSize="9" fontWeight="bold" fill="var(--green-primary)">{p.val}</text>
-                    <text x={p.x} y={chartHeight - 8} textAnchor="middle" fontSize="9" fill="var(--text-secondary)">{p.label}</text>
-                  </g>
-                ))}
-              </svg>
-            </div>
-          </GlassCard>
+          <CategoryBreakdown categories={categories} total={total} />
+          <TrendChart total={total} currentEmissions={currentEmissions} benchmark={benchmark} />
         </div>
 
-        {/* AI Carbon Coach Panel (Feature 2) */}
         <CarbonCoach 
           profileData={profileData} 
           recommendations={recommendations} 
@@ -390,156 +249,21 @@ export default function Dashboard({
 
       {/* BOTTOM ROW: Weekly Challenges & Action Plan */}
       <section className="grid grid-2" style={{ marginTop: '20px', alignItems: 'stretch' }}>
-        
-        {/* Weekly Challenges (Feature 3) */}
-        <GlassCard leafCorner={true} padding="30px">
-          <div style={{ marginBottom: '20px' }}>
-            <h2 style={{ fontSize: '1.6rem', color: 'var(--green-primary)' }}>Weekly Eco Challenges</h2>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-              Join focused tasks to build green habits and earn trophy achievements.
-            </p>
-          </div>
+        <WeeklyChallenges 
+          challenges={challenges}
+          joinedChallenges={joinedChallenges}
+          completedChallenges={completedChallenges}
+          onJoinChallenge={handleJoinChallenge}
+          onToggleChallenge={handleToggleChallenge}
+          loadingChallenges={loadingChallenges}
+        />
 
-          {loadingChallenges ? (
-            <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>Loading challenges...</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {challenges.map((challenge) => {
-                const isJoined = !!joinedChallenges[challenge.id];
-                const isCompleted = !!completedChallenges[challenge.id];
-                return (
-                  <div 
-                    key={challenge.id}
-                    style={{
-                      border: '1px solid',
-                      borderColor: isCompleted ? 'var(--green-light)' : isJoined ? 'var(--gold-primary)' : 'var(--border-light)',
-                      backgroundColor: isCompleted ? 'rgba(232, 239, 234, 0.4)' : isJoined ? 'rgba(243, 237, 224, 0.2)' : 'transparent',
-                      padding: '16px',
-                      borderRadius: '12px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '8px',
-                      transition: 'var(--transition-smooth)'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <h3 style={{ fontSize: '1rem', color: 'var(--green-primary)' }}>
-                          {challenge.title} <span style={{ fontSize: '0.9rem' }}>{challenge.badge.split(' ')[0]}</span>
-                        </h3>
-                        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '3px' }}>
-                          {challenge.description}
-                        </p>
-                      </div>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--green-medium)', whiteSpace: 'nowrap' }}>
-                        -{challenge.co2Savings} kg
-                      </span>
-                    </div>
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                      <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>
-                        Difficulty: {challenge.difficulty}
-                      </span>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        {!isJoined ? (
-                          <button 
-                            className="btn btn-secondary"
-                            onClick={() => onJoinChallenge(challenge.id, true)}
-                            style={{ padding: '6px 14px', fontSize: '0.75rem' }}
-                            aria-label={`Join challenge: ${challenge.title}`}
-                          >
-                            Join Challenge
-                          </button>
-                        ) : (
-                          <>
-                            <button 
-                              className={`btn ${isCompleted ? 'btn-primary' : 'btn-gold'}`}
-                              onClick={() => onToggleChallenge(challenge.id, !isCompleted)}
-                              style={{ padding: '6px 14px', fontSize: '0.75rem' }}
-                              aria-label={`${isCompleted ? 'Mark incomplete' : 'Complete'} challenge: ${challenge.title}`}
-                            >
-                              {isCompleted ? '✓ Completed' : 'Complete'}
-                            </button>
-                            {isCompleted && (
-                              <button 
-                                className="btn btn-text"
-                                onClick={() => onToggleChallenge(challenge.id, false)}
-                                style={{ padding: '2px 4px', fontSize: '0.75rem' }}
-                                aria-label={`Undo challenge: ${challenge.title}`}
-                              >
-                                Undo
-                              </button>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </GlassCard>
-
-        {/* Action Plan Recommendations */}
-        <GlassCard leafCorner={true} padding="30px">
-          <div style={{ marginBottom: '20px' }}>
-            <h2 style={{ fontSize: '1.6rem', color: 'var(--green-primary)' }}>Customized Action Plan</h2>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-              Implement the top recommendations suggested for your largest footprint categories.
-            </p>
-          </div>
-
-          {loadingRecs ? (
-            <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>Assembling action checklist...</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {recommendations.map((rec) => {
-                const isLogged = !!loggedToday[rec.id];
-                return (
-                  <div 
-                    key={rec.id}
-                    style={{
-                      border: '1px solid var(--border-light)',
-                      borderLeft: isLogged ? '4px solid var(--green-light)' : '1px solid var(--border-gold)',
-                      backgroundColor: isLogged ? 'rgba(232, 239, 234, 0.3)' : 'transparent',
-                      padding: '16px',
-                      borderRadius: '12px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '6px',
-                      transition: 'var(--transition-smooth)'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <h3 style={{ fontSize: '1rem', color: isLogged ? 'var(--text-secondary)' : 'var(--green-primary)', textDecoration: isLogged ? 'line-through' : 'none' }}>
-                        {rec.title}
-                      </h3>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--green-medium)', whiteSpace: 'nowrap' }}>
-                        -{rec.estimatedSavings} kg
-                      </span>
-                    </div>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{rec.reason}</p>
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
-                      <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>
-                        Difficulty: {rec.difficulty}
-                      </span>
-                      <button 
-                        className={`btn ${isLogged ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => handleToggleAction(rec.id, rec.estimatedSavings)}
-                        style={{ padding: '6px 14px', fontSize: '0.75rem' }}
-                        aria-label={`${isLogged ? 'Undo logging' : 'Log'} action: ${rec.title}`}
-                      >
-                        {isLogged ? '✓ Logged' : rec.actionVerb || 'Log Action'}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </GlassCard>
+        <ActionPlan 
+          recommendations={recommendations}
+          loggedToday={loggedToday}
+          onToggleAction={handleToggleAction}
+          loadingRecs={loadingRecs}
+        />
       </section>
     </main>
   );
