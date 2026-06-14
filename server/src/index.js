@@ -15,6 +15,10 @@ const errorHandler = require('./middleware/errorHandler');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Trust the first proxy (e.g. Google Cloud Run Load Balancer) to properly detect IP addresses for rate limiting
+app.set('trust proxy', 1);
+
+
 // Security Middlewares
 // Configure Content Security Policy to secure endpoints without breaking fonts, local scripts, and styles
 app.use(helmet({
