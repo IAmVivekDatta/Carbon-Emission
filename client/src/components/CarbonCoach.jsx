@@ -1,9 +1,28 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import GlassCard from './GlassCard';
 
 /**
- * CarbonCoach conversational chat widget.
- * Communicates with backend /api/chat.
+ * Static suggestion chips — defined outside the component to prevent
+ * garbage-collection/re-allocation overhead on every render.
+ * @type {string[]}
+ */
+const SUGGESTION_CHIPS = [
+  "What should I change first?",
+  "How can I cut my food footprint?",
+  "Tips for lowering energy bills",
+  "Explain my recycling impact"
+];
+
+/**
+ * CarbonCoach - Conversational AI chat widget.
+ * Communicates with the backend /api/chat endpoint.
+ * Falls back gracefully to offline rule-based responses when AI is unavailable.
+ *
+ * @component
+ * @param {Object} props
+ * @param {Object} props.profileData - The user's full carbon profile with categories, total, and benchmark
+ * @param {Array}  props.recommendations - List of current action recommendations for the user
+ * @returns {React.ReactElement}
  */
 export default function CarbonCoach({ profileData, recommendations }) {
   const [messages, setMessages] = useState([
@@ -22,7 +41,12 @@ export default function CarbonCoach({ profileData, recommendations }) {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  const handleSend = async (questionText) => {
+  /**
+   * Sends a user question to the AI Carbon Coach API endpoint.
+   * Falls back to an inline error message if the request fails.
+   * @param {string} [questionText] - Optional pre-filled question text (from suggestion chips)
+   */
+  const handleSend = useCallback(async (questionText) => {
     const query = questionText || input.trim();
     if (!query) return;
 
@@ -30,7 +54,6 @@ export default function CarbonCoach({ profileData, recommendations }) {
       setInput('');
     }
 
-    // Add user message
     const userMsg = { sender: 'user', text: query, timestamp: new Date() };
     setMessages(prev => [...prev, userMsg]);
     setLoading(true);
@@ -38,9 +61,7 @@ export default function CarbonCoach({ profileData, recommendations }) {
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userQuestion: query,
           profileData,
@@ -68,21 +89,25 @@ export default function CarbonCoach({ profileData, recommendations }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [input, profileData, recommendations]);
 
-  const handleKeyPress = (e) => {
+  /**
+   * Handles Enter key press in the text input to submit a question.
+   * @param {React.KeyboardEvent} e - The keyboard event
+   */
+  const handleKeyPress = useCallback((e) => {
     if (e.key === 'Enter') {
       handleSend();
     }
-  };
+  }, [handleSend]);
 
-  // Quick prompt suggestions
-  const suggestionChips = [
-    "What should I change first?",
-    "How can I cut my food footprint?",
-    "Tips for lowering energy bills",
-    "Explain my recycling impact"
-  ];
+  /**
+   * Updates the input field state on every change.
+   * @param {React.ChangeEvent<HTMLInputElement>} e - The change event
+   */
+  const handleInputChange = useCallback((e) => {
+    setInput(e.target.value);
+  }, []);
 
   return (
     <GlassCard padding="24px" leafCorner={true} style={{ display: 'flex', flexDirection: 'column', height: '420px' }}>
@@ -107,6 +132,7 @@ export default function CarbonCoach({ profileData, recommendations }) {
         }}
         role="log"
         aria-label="Coach chat log"
+        aria-live="polite"
       >
         {messages.map((msg, index) => {
           const isCoach = msg.sender === 'coach';
@@ -125,7 +151,6 @@ export default function CarbonCoach({ profileData, recommendations }) {
                 color: 'var(--text-primary)'
               }}
             >
-              {/* Split responses containing lists nicely if returned */}
               <div style={{ whiteSpace: 'pre-wrap' }}>
                 {msg.text}
               </div>
@@ -142,6 +167,8 @@ export default function CarbonCoach({ profileData, recommendations }) {
               fontSize: '0.9rem',
               color: 'var(--text-secondary)'
             }}
+            aria-live="polite"
+            aria-label="Coach is thinking"
           >
             Thinking...
           </div>
@@ -149,10 +176,10 @@ export default function CarbonCoach({ profileData, recommendations }) {
         <div ref={chatEndRef} />
       </div>
 
-      {/* Suggestion Chips */}
+      {/* Suggestion Chips — shown only before first user message */}
       {messages.length === 1 && !loading && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
-          {suggestionChips.map((chip, idx) => (
+          {SUGGESTION_CHIPS.map((chip, idx) => (
             <button 
               key={idx}
               onClick={() => handleSend(chip)}
@@ -164,6 +191,7 @@ export default function CarbonCoach({ profileData, recommendations }) {
                 borderColor: 'var(--border-gold)' 
               }}
               type="button"
+              aria-label={`Ask: ${chip}`}
             >
               {chip}
             </button>
@@ -177,7 +205,7 @@ export default function CarbonCoach({ profileData, recommendations }) {
           type="text" 
           placeholder="Ask a question..."
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={handleInputChange}
           onKeyDown={handleKeyPress}
           disabled={loading}
           aria-label="Coach chat message text input"

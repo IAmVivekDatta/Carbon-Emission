@@ -1,9 +1,17 @@
 import React from 'react';
 
 /**
- * Reusable decorative LeafDivider component drawing fine gold/green lines.
+ * Reusable decorative LeafDivider component drawing fine gold/green botanical lines.
+ * Wrapped in React.memo as it is pure decoration with no internal state.
+ *
+ * @component
+ * @param {Object} props
+ * @param {string} [props.color='var(--gold-primary)'] - Stroke color for the SVG paths
+ * @param {string} [props.width='100%'] - Outer container width
+ * @param {string} [props.className=''] - Additional class names
+ * @returns {React.ReactElement}
  */
-export default function LeafDivider({ color = 'var(--gold-primary)', width = '100%', className = '' }) {
+function LeafDivider({ color = 'var(--gold-primary)', width = '100%', className = '' }) {
   return (
     <div className={`flex justify-center items-center py-6 ${className}`} style={{ width, margin: '0 auto' }}>
       <svg 
@@ -40,3 +48,5 @@ export default function LeafDivider({ color = 'var(--gold-primary)', width = '10
     </div>
   );
 }
+
+export default React.memo(LeafDivider);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import GlassCard from '../components/GlassCard';
 import LeafDivider from '../components/LeafDivider';
 import ProgressBar from '../components/ProgressBar';
@@ -6,8 +6,21 @@ import CarbonTwin from '../components/CarbonTwin';
 import CarbonCoach from '../components/CarbonCoach';
 
 /**
- * Premium Eco-friendly Dashboard & behavior change platform.
- * Integrates Carbon Twin, AI Coach, Weekly Challenges, and Impact Stories.
+ * Premium Eco-friendly Dashboard & behaviour-change platform.
+ * Integrates Carbon Twin ecosystem, AI Coach, Weekly Challenges, Action Plans, and Impact Stories.
+ * Uses useMemo heavily to avoid re-computing derived values on every render.
+ *
+ * @component
+ * @param {Object}   props
+ * @param {Object}   props.profileData          - Calculated carbon profile object from the API
+ * @param {Function} props.onLogAction          - Callback to log/unlog an action and update streaks
+ * @param {Object}   [props.completedActions={}] - Map of actionId → logged boolean
+ * @param {Object}   [props.completedChallenges={}] - Map of challengeId → completed boolean
+ * @param {Function} props.onToggleChallenge    - Callback to toggle a challenge completed state
+ * @param {Object}   [props.joinedChallenges={}] - Map of challengeId → joined boolean
+ * @param {Function} props.onJoinChallenge      - Callback to join/leave a challenge
+ * @param {number}   [props.streak=0]           - Current daily habit-logging streak count
+ * @returns {React.ReactElement}
  */
 export default function Dashboard({ 
   profileData, 
@@ -19,7 +32,7 @@ export default function Dashboard({
   onJoinChallenge,
   streak = 0 
 }) {
-  const { categories, total, benchmark, percentageOfBenchmark, inputs } = profileData;
+  const { categories, total, benchmark, inputs } = profileData;
   const [recommendations, setRecommendations] = useState([]);
   const [challenges, setChallenges] = useState([]);
   const [loadingRecs, setLoadingRecs] = useState(true);
@@ -28,6 +41,7 @@ export default function Dashboard({
 
   // Fetch recommendations from API
   useEffect(() => {
+    let cancelled = false;
     async function fetchRecs() {
       try {
         const response = await fetch('/api/recommendations', {
@@ -36,131 +50,170 @@ export default function Dashboard({
           body: JSON.stringify({ categories, inputs })
         });
         const data = await response.json();
-        if (response.ok && data.recommendations) {
+        if (!cancelled && response.ok && data.recommendations) {
           setRecommendations(data.recommendations);
         }
       } catch (err) {
         console.error('Error fetching recommendations:', err);
       } finally {
-        setLoadingRecs(false);
+        if (!cancelled) setLoadingRecs(false);
       }
     }
     fetchRecs();
+    return () => { cancelled = true; };
   }, [categories, inputs]);
 
   // Fetch weekly challenges from API
   useEffect(() => {
+    let cancelled = false;
     async function fetchChallenges() {
       try {
         const response = await fetch('/api/challenges');
         const data = await response.json();
-        if (response.ok && data.challenges) {
+        if (!cancelled && response.ok && data.challenges) {
           setChallenges(data.challenges);
         }
       } catch (err) {
         console.error('Error fetching challenges:', err);
       } finally {
-        setLoadingChallenges(false);
+        if (!cancelled) setLoadingChallenges(false);
       }
     }
     fetchChallenges();
+    return () => { cancelled = true; };
   }, []);
 
-  // Handle local action logging toggles
-  const handleToggleAction = (actionId, savings) => {
+  /**
+   * Toggles an action's logged state locally and propagates to App state.
+   * @param {string} actionId - The recommendation ID to toggle
+   * @param {number} savings  - Estimated CO2 savings for this action
+   */
+  const handleToggleAction = useCallback((actionId, savings) => {
     const isNowLogged = !loggedToday[actionId];
-    const updated = {
-      ...loggedToday,
-      [actionId]: isNowLogged
-    };
+    const updated = { ...loggedToday, [actionId]: isNowLogged };
     setLoggedToday(updated);
     onLogAction(actionId, isNowLogged, savings);
-  };
+  }, [loggedToday, onLogAction]);
 
-  // 1. Calculate savings from actions
-  const totalSavingsLogged = Object.entries(loggedToday)
-    .filter(([_, logged]) => logged)
-    .reduce((sum, [id]) => {
-      const rec = recommendations.find(r => r.id === id);
-      return sum + (rec ? rec.estimatedSavings : 0);
-    }, 0);
+  // ── Derived savings ──────────────────────────────────────────────────────────
 
-  // 2. Calculate savings from challenges
-  const totalSavingsFromChallenges = Object.entries(completedChallenges)
-    .filter(([_, completed]) => completed)
-    .reduce((sum, [id]) => {
-      const chal = challenges.find(c => c.id === id);
-      return sum + (chal ? chal.co2Savings : 0);
-    }, 0);
+  /** Total CO2 savings from logged action plan items */
+  const totalSavingsLogged = useMemo(() =>
+    Object.entries(loggedToday)
+      .filter(([_, logged]) => logged)
+      .reduce((sum, [id]) => {
+        const rec = recommendations.find(r => r.id === id);
+        return sum + (rec ? rec.estimatedSavings : 0);
+      }, 0),
+    [loggedToday, recommendations]
+  );
 
-  const totalEmissionsSaved = Math.round((totalSavingsLogged + totalSavingsFromChallenges) * 10) / 10;
-  const currentEmissions = Math.max(0, Math.round((total - totalEmissionsSaved) * 10) / 10);
-  const currentPercentOfBenchmark = Math.round((currentEmissions / benchmark) * 100);
+  /** Total CO2 savings from completed weekly challenges */
+  const totalSavingsFromChallenges = useMemo(() =>
+    Object.entries(completedChallenges)
+      .filter(([_, completed]) => completed)
+      .reduce((sum, [id]) => {
+        const chal = challenges.find(c => c.id === id);
+        return sum + (chal ? chal.co2Savings : 0);
+      }, 0),
+    [completedChallenges, challenges]
+  );
 
-  // 3. Impact Stories Translation (Feature 4)
-  const carKms = Math.round(totalEmissionsSaved * 5.88 * 10) / 10;
-  const treeDays = Math.round(totalEmissionsSaved * 16.5);
-  const phoneCharges = Math.round(totalEmissionsSaved * 120);
+  const totalEmissionsSaved = useMemo(() =>
+    Math.round((totalSavingsLogged + totalSavingsFromChallenges) * 10) / 10,
+    [totalSavingsLogged, totalSavingsFromChallenges]
+  );
 
-  // 4. Earned Achievements / Badges
-  const earnedBadges = challenges
-    .filter(c => completedChallenges[c.id])
-    .map(c => c.badge);
+  const currentEmissions = useMemo(() =>
+    Math.max(0, Math.round((total - totalEmissionsSaved) * 10) / 10),
+    [total, totalEmissionsSaved]
+  );
 
-  // 5. Smart Insights
-  const getInsightText = () => {
+  const currentPercentOfBenchmark = useMemo(() =>
+    Math.round((currentEmissions / benchmark) * 100),
+    [currentEmissions, benchmark]
+  );
+
+  // ── Impact Story Equivalents ─────────────────────────────────────────────────
+
+  const { carKms, treeDays, phoneCharges } = useMemo(() => ({
+    carKms:       Math.round(totalEmissionsSaved * 5.88 * 10) / 10,
+    treeDays:     Math.round(totalEmissionsSaved * 16.5),
+    phoneCharges: Math.round(totalEmissionsSaved * 120)
+  }), [totalEmissionsSaved]);
+
+  // ── Earned Challenge Badges ──────────────────────────────────────────────────
+
+  const earnedBadges = useMemo(() =>
+    challenges.filter(c => completedChallenges[c.id]).map(c => c.badge),
+    [challenges, completedChallenges]
+  );
+
+  // ── Smart Insight Text ───────────────────────────────────────────────────────
+
+  const insightText = useMemo(() => {
     const maxCategory = Object.entries(categories).sort((a, b) => b[1] - a[1])[0];
     const categoryNames = {
-      commute: 'commuting and travel',
-      diet: 'food and culinary habits',
+      commute:    'commuting and travel',
+      diet:       'food and culinary habits',
       homeEnergy: 'home electricity and heating',
-      shopping: 'purchasing behavior',
-      waste: 'waste disposal and recycling'
+      shopping:   'purchasing behavior',
+      waste:      'waste disposal and recycling'
     };
+    const leadText = `Your highest emission category is ${categoryNames[maxCategory[0]]}, representing ${Math.round((maxCategory[1] / total) * 100)}% of your profile.`;
 
-    const leadText = `Your highest emission category is ${categoryNames[maxCategory[0]]}, representing ${Math.round((maxCategory[1]/total)*100)}% of your profile.`;
-    
-    if (maxCategory[0] === 'commute') {
-      return `${leadText} Reducing vehicle distance or carpooling even two days a week is your most powerful lever to shrink your carbon footprint.`;
-    }
-    if (maxCategory[0] === 'diet') {
-      return `${leadText} Incorporating plant-based meals can cut your agricultural footprint in half. A flexible approach to dining is key.`;
-    }
-    if (maxCategory[0] === 'homeEnergy') {
-      return `${leadText} Simple household thermal modifications (like checking insulation and adjusting thermostat settings by 1°C) will deliver substantial immediate grid savings.`;
-    }
+    if (maxCategory[0] === 'commute') return `${leadText} Reducing vehicle distance or carpooling even two days a week is your most powerful lever to shrink your carbon footprint.`;
+    if (maxCategory[0] === 'diet') return `${leadText} Incorporating plant-based meals can cut your agricultural footprint in half. A flexible approach to dining is key.`;
+    if (maxCategory[0] === 'homeEnergy') return `${leadText} Simple household thermal modifications (like checking insulation and adjusting thermostat settings by 1°C) will deliver substantial immediate grid savings.`;
     return `${leadText} Embracing the repair of tools/clothing and composting organic food scraps will prevent methane buildup in landfills.`;
-  };
+  }, [categories, total]);
 
-  // 6. Trend line coordinates mapping
-  const weekData = [
-    { label: 'Base', val: total },
-    { label: 'Wk 1', val: Math.round((total * 0.98) * 10) / 10 },
-    { label: 'Wk 2', val: Math.round((total * 0.96) * 10) / 10 },
-    { label: 'Wk 3', val: Math.round((total * 0.94) * 10) / 10 },
-    { label: 'Wk 4', val: Math.round((total * 0.92) * 10) / 10 },
-    { label: 'Now', val: currentEmissions }
-  ];
+  // ── SVG Trend Chart Data ─────────────────────────────────────────────────────
+
+  const { pathD, areaD, points, benchmarkY } = useMemo(() => {
+    const chartWidth = 500;
+    const chartHeight = 180;
+    const paddingX = 40;
+    const paddingY = 25;
+
+    const weekData = [
+      { label: 'Base', val: total },
+      { label: 'Wk 1', val: Math.round((total * 0.98) * 10) / 10 },
+      { label: 'Wk 2', val: Math.round((total * 0.96) * 10) / 10 },
+      { label: 'Wk 3', val: Math.round((total * 0.94) * 10) / 10 },
+      { label: 'Wk 4', val: Math.round((total * 0.92) * 10) / 10 },
+      { label: 'Now',  val: currentEmissions }
+    ];
+
+    const maxVal = Math.max(...weekData.map(d => d.val), benchmark) * 1.1;
+    const minVal = Math.min(...weekData.map(d => d.val)) * 0.8;
+
+    const pts = weekData.map((d, index) => {
+      const x = paddingX + (index * (chartWidth - 2 * paddingX) / (weekData.length - 1));
+      const y = chartHeight - paddingY - ((d.val - minVal) * (chartHeight - 2 * paddingY) / (maxVal - minVal));
+      return { x, y, ...d };
+    });
+
+    const path = pts.reduce((p, pt, i) => i === 0 ? `M ${pt.x} ${pt.y}` : `${p} L ${pt.x} ${pt.y}`, '');
+    const area = `${path} L ${pts[pts.length - 1].x} ${chartHeight - paddingY} L ${pts[0].x} ${chartHeight - paddingY} Z`;
+    const bmY  = chartHeight - paddingY - ((benchmark - minVal) * (chartHeight - 2 * paddingY) / (maxVal - minVal));
+
+    return {
+      pathD: path,
+      areaD: area,
+      points: pts,
+      benchmarkY: bmY,
+      chartWidth,
+      chartHeight,
+      paddingX,
+      paddingY
+    };
+  }, [total, currentEmissions, benchmark]);
 
   const chartWidth = 500;
   const chartHeight = 180;
   const paddingX = 40;
   const paddingY = 25;
-
-  const maxVal = Math.max(...weekData.map(d => d.val), benchmark) * 1.1;
-  const minVal = Math.min(...weekData.map(d => d.val)) * 0.8;
-
-  const points = weekData.map((d, index) => {
-    const x = paddingX + (index * (chartWidth - 2 * paddingX) / (weekData.length - 1));
-    const y = chartHeight - paddingY - ((d.val - minVal) * (chartHeight - 2 * paddingY) / (maxVal - minVal));
-    return { x, y, ...d };
-  });
-
-  const pathD = points.reduce((path, p, i) => {
-    return i === 0 ? `M ${p.x} ${p.y}` : `${path} L ${p.x} ${p.y}`;
-  }, '');
-  const areaD = `${pathD} L ${points[points.length - 1].x} ${chartHeight - paddingY} L ${points[0].x} ${chartHeight - paddingY} Z`;
-  const benchmarkY = chartHeight - paddingY - ((benchmark - minVal) * (chartHeight - 2 * paddingY) / (maxVal - minVal));
 
   return (
     <main className="container section animate-fade" id="main-content" style={{ padding: '40px 24px' }}>
@@ -174,10 +227,8 @@ export default function Dashboard({
 
       {/* TOP ROW: Carbon Twin Visual Ecosystem & Core Stats Card */}
       <section className="grid grid-2" style={{ marginBottom: '32px', alignItems: 'stretch' }}>
-        {/* Visual Nature Carbon Twin */}
         <CarbonTwin emissions={currentEmissions} />
 
-        {/* Global Carbon & Impact Translation Metrics */}
         <GlassCard leafCorner={true} padding="30px" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -200,7 +251,7 @@ export default function Dashboard({
               Target benchmark: {benchmark} kg/mo. You are emitting <strong>{currentPercentOfBenchmark}%</strong> of the target.
             </p>
 
-            {/* Impact Stories equivalents (Feature 4) */}
+            {/* Impact Stories (Feature 4) */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <h4 style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--green-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                 Real-World Impact
@@ -228,7 +279,7 @@ export default function Dashboard({
             </div>
           </div>
 
-          {/* Achievements / Badges indicator (Feature 3) */}
+          {/* Achievements / Badges (Feature 3) */}
           {earnedBadges.length > 0 && (
             <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border-light)' }}>
               <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--gold-hover)', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
@@ -256,53 +307,28 @@ export default function Dashboard({
         </GlassCard>
       </section>
 
-      {/* MID ROW: Category breakdown, SVGs chart, and AI Carbon Coach */}
+      {/* MID ROW: Category breakdown, SVG chart, and AI Carbon Coach */}
       <section className="grid grid-2" style={{ marginBottom: '32px', alignItems: 'stretch' }}>
-        {/* Left Side: Calculations Breakdown & Custom SVG line graph */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          {/* Categories Progress Bars */}
+          {/* Category Progress Bars */}
           <GlassCard leafCorner={false} padding="24px">
             <h2 style={{ fontSize: '1.25rem', marginBottom: '16px', color: 'var(--green-primary)' }}>Emissions by Category</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '4px' }}>
-                  <span>🚘 Commute & Travel</span>
-                  <span style={{ fontWeight: '600' }}>{categories.commute} kg</span>
+              {[
+                { emoji: '🚘', label: 'Commute & Travel', value: categories.commute },
+                { emoji: '🥗', label: 'Diet & Food',      value: categories.diet },
+                { emoji: '⚡', label: 'Home Energy',       value: categories.homeEnergy },
+                { emoji: '🛍️', label: 'Shopping & Consumables', value: categories.shopping },
+                { emoji: '🗑️', label: 'Waste & Compost',  value: categories.waste }
+              ].map(({ emoji, label, value }) => (
+                <div key={label}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '4px' }}>
+                    <span>{emoji} {label}</span>
+                    <span style={{ fontWeight: '600' }}>{value} kg</span>
+                  </div>
+                  <ProgressBar value={value} max={total} height="6px" />
                 </div>
-                <ProgressBar value={categories.commute} max={total} height="6px" />
-              </div>
-              
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '4px' }}>
-                  <span>🥗 Diet & Food</span>
-                  <span style={{ fontWeight: '600' }}>{categories.diet} kg</span>
-                </div>
-                <ProgressBar value={categories.diet} max={total} height="6px" />
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '4px' }}>
-                  <span>⚡ Home Energy</span>
-                  <span style={{ fontWeight: '600' }}>{categories.homeEnergy} kg</span>
-                </div>
-                <ProgressBar value={categories.homeEnergy} max={total} height="6px" />
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '4px' }}>
-                  <span>🛍️ Shopping & Consumables</span>
-                  <span style={{ fontWeight: '600' }}>{categories.shopping} kg</span>
-                </div>
-                <ProgressBar value={categories.shopping} max={total} height="6px" />
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '4px' }}>
-                  <span>🗑️ Waste & Compost</span>
-                  <span style={{ fontWeight: '600' }}>{categories.waste} kg</span>
-                </div>
-                <ProgressBar value={categories.waste} max={total} height="6px" />
-              </div>
+              ))}
             </div>
           </GlassCard>
 
@@ -324,10 +350,8 @@ export default function Dashboard({
                 <line x1={paddingX} y1={chartHeight - paddingY} x2={chartWidth - paddingX} y2={chartHeight - paddingY} stroke="var(--border-light)" strokeWidth="1" />
                 <line x1={paddingX} y1={paddingY} x2={chartWidth - paddingX} y2={paddingY} stroke="var(--border-light)" strokeWidth="0.5" strokeDasharray="3" />
                 <line x1={paddingX} y1={benchmarkY} x2={chartWidth - paddingX} y2={benchmarkY} stroke="var(--gold-primary)" strokeWidth="1.2" strokeDasharray="4 4" />
-                
                 <path d={areaD} fill="url(#chartGradient)" />
                 <path d={pathD} fill="none" stroke="var(--green-medium)" strokeWidth="2.5" strokeLinecap="round" />
-
                 {points.map((p, i) => (
                   <g key={i}>
                     <circle cx={p.x} cy={p.y} r="4" fill="var(--bg-primary)" stroke="var(--green-light)" strokeWidth="2" />
@@ -340,14 +364,14 @@ export default function Dashboard({
           </GlassCard>
         </div>
 
-        {/* Right Side: AI Carbon Coach Panel (Feature 2) */}
+        {/* AI Carbon Coach Panel (Feature 2) */}
         <CarbonCoach 
           profileData={profileData} 
           recommendations={recommendations} 
         />
       </section>
 
-      {/* Assistant Nudge / Insight Box */}
+      {/* Smart Assistant Insight Box */}
       <section style={{ marginBottom: '42px' }}>
         <GlassCard padding="20px" style={{ borderLeft: '4px solid var(--gold-primary)', background: 'rgba(243, 237, 224, 0.4)' }}>
           <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
@@ -355,7 +379,7 @@ export default function Dashboard({
             <div>
               <h3 style={{ fontSize: '1.05rem', fontWeight: '600', color: 'var(--green-primary)' }}>Smart Assistant Insight</h3>
               <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                {getInsightText()}
+                {insightText}
               </p>
             </div>
           </div>
@@ -364,10 +388,10 @@ export default function Dashboard({
 
       <LeafDivider />
 
-      {/* BOTTOM ROW: Weekly Challenges & Action Plan Suggestions */}
+      {/* BOTTOM ROW: Weekly Challenges & Action Plan */}
       <section className="grid grid-2" style={{ marginTop: '20px', alignItems: 'stretch' }}>
         
-        {/* Left Side: Weekly Challenges Component (Feature 3) */}
+        {/* Weekly Challenges (Feature 3) */}
         <GlassCard leafCorner={true} padding="30px">
           <div style={{ marginBottom: '20px' }}>
             <h2 style={{ fontSize: '1.6rem', color: 'var(--green-primary)' }}>Weekly Eco Challenges</h2>
@@ -416,7 +440,6 @@ export default function Dashboard({
                       <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>
                         Difficulty: {challenge.difficulty}
                       </span>
-                      
                       <div style={{ display: 'flex', gap: '8px' }}>
                         {!isJoined ? (
                           <button 
@@ -442,6 +465,7 @@ export default function Dashboard({
                                 className="btn btn-text"
                                 onClick={() => onToggleChallenge(challenge.id, false)}
                                 style={{ padding: '2px 4px', fontSize: '0.75rem' }}
+                                aria-label={`Undo challenge: ${challenge.title}`}
                               >
                                 Undo
                               </button>
@@ -457,7 +481,7 @@ export default function Dashboard({
           )}
         </GlassCard>
 
-        {/* Right Side: Action Plan Recommendations */}
+        {/* Action Plan Recommendations */}
         <GlassCard leafCorner={true} padding="30px">
           <div style={{ marginBottom: '20px' }}>
             <h2 style={{ fontSize: '1.6rem', color: 'var(--green-primary)' }}>Customized Action Plan</h2>
@@ -495,9 +519,7 @@ export default function Dashboard({
                         -{rec.estimatedSavings} kg
                       </span>
                     </div>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      {rec.reason}
-                    </p>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{rec.reason}</p>
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
                       <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>

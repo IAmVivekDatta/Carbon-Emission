@@ -1,36 +1,52 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 
 /**
- * CarbonTwin - A visual nature ecosystem that reflects the user's carbon score.
- * 
- * - Low emissions (<= 350 kg/mo): Vibrant green landscape, clean sky, flowing river, birds, bright sun.
- * - Medium emissions (351 - 700 kg/mo): Hazy warm sky, fewer trees, calmer river, fewer birds, dim sun.
- * - High emissions (> 700 kg/mo): Grey sky, bare dry trees, murky stagnant river, no birds, obscured sun.
+ * CarbonTwin - A visual nature ecosystem reflecting the user's carbon score.
+ * Wrapped in React.memo to prevent expensive SVG redraws unless emissions value changes.
+ * Uses useMemo to derive visual parameters only when state changes.
+ *
+ * Emission states:
+ * - Low  (≤ 350 kg/mo): Vibrant green landscape, clean sky, flowing river, birds, bright sun.
+ * - Medium (351–700 kg/mo): Hazy warm sky, fewer trees, calmer river, fewer birds, dim sun.
+ * - High (> 700 kg/mo): Grey sky, bare dry trees, murky stagnant river, no birds, obscured sun.
+ *
+ * @component
+ * @param {Object} props
+ * @param {number} [props.emissions=400] - Monthly CO2e emissions in kg
+ * @returns {React.ReactElement}
  */
-export default function CarbonTwin({ emissions = 400 }) {
-  // Determine state threshold
-  let state = 'low';
-  if (emissions > 350 && emissions <= 700) {
-    state = 'medium';
-  } else if (emissions > 700) {
-    state = 'high';
-  }
+function CarbonTwin({ emissions = 400 }) {
+  // Derive state threshold — only recalculate when emissions changes
+  const state = useMemo(() => {
+    if (emissions <= 350) return 'low';
+    if (emissions <= 700) return 'medium';
+    return 'high';
+  }, [emissions]);
 
-  // Define visual parameters based on state
-  const skyGradients = {
-    low: { start: '#D0EBFD', end: '#A2D2FF', sun: '#F9D030' },
-    medium: { start: '#FDF7E7', end: '#E3D7B5', sun: '#E8CA65' },
-    high: { start: '#EAE8E4', end: '#CAC6BF', sun: '#B8B3A8' }
-  };
+  // Define visual parameters based on state — memoised to prevent object allocation on every render
+  const { currentSky, currentRiver } = useMemo(() => {
+    const skyGradients = {
+      low:    { start: '#D0EBFD', end: '#A2D2FF', sun: '#F9D030' },
+      medium: { start: '#FDF7E7', end: '#E3D7B5', sun: '#E8CA65' },
+      high:   { start: '#EAE8E4', end: '#CAC6BF', sun: '#B8B3A8' }
+    };
+    const riverColors = {
+      low:    { fill: '#3A86C8', ripple: '#60A5FA' },
+      medium: { fill: '#5C7E8D', ripple: '#8DA9C4' },
+      high:   { fill: '#7C817D', ripple: '#9BA19D' }
+    };
+    return {
+      currentSky: skyGradients[state],
+      currentRiver: riverColors[state]
+    };
+  }, [state]);
 
-  const riverColors = {
-    low: { fill: '#3A86C8', ripple: '#60A5FA' },
-    medium: { fill: '#5C7E8D', ripple: '#8DA9C4' },
-    high: { fill: '#7C817D', ripple: '#9BA19D' }
-  };
-
-  const currentSky = skyGradients[state];
-  const currentRiver = riverColors[state];
+  // Memoize the state badge label
+  const stateBadge = useMemo(() => {
+    if (state === 'low') return { label: '🌿 Vibrant & Balanced', bg: '#EBFDF2', color: '#128C4A' };
+    if (state === 'medium') return { label: '⛅ Moderate Load', bg: '#FEF9EC', color: '#B07D10' };
+    return { label: '⚠️ Heavy Burden', bg: '#FDF2F2', color: '#9B1C1C' };
+  }, [state]);
 
   return (
     <div 
@@ -49,7 +65,7 @@ export default function CarbonTwin({ emissions = 400 }) {
         <div>
           <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: 'var(--green-primary)' }}>Your Carbon Twin</h3>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-            A real-time reflection of your lifestyle’s ecological balance.
+            A real-time reflection of your lifestyle's ecological balance.
           </p>
         </div>
         
@@ -60,12 +76,12 @@ export default function CarbonTwin({ emissions = 400 }) {
             textTransform: 'uppercase', 
             padding: '4px 10px', 
             borderRadius: '20px',
-            backgroundColor: state === 'low' ? '#EBFDF2' : state === 'medium' ? '#FEF9EC' : '#FDF2F2',
-            color: state === 'low' ? '#128C4A' : state === 'medium' ? '#B07D10' : '#9B1C1C',
+            backgroundColor: stateBadge.bg,
+            color: stateBadge.color,
             border: '1px solid currentColor'
           }}
         >
-          {state === 'low' ? '🌿 Vibrant & Balanced' : state === 'medium' ? '⛅ Moderate Load' : '⚠️ Heavy Burden'}
+          {stateBadge.label}
         </span>
       </div>
 
@@ -170,24 +186,20 @@ export default function CarbonTwin({ emissions = 400 }) {
         {/* Tree Renderings */}
         {state === 'low' && (
           <g>
-            {/* Tree 1 (Left) */}
             <rect x="50" y="130" width="6" height="30" fill="#5C4033" />
             <path d="M30 135 L53 95 L76 135 Z" fill="#228B22" />
             <path d="M35 115 L53 80 L71 115 Z" fill="#2E8B57" />
             <path d="M40 95 L53 65 L66 95 Z" fill="#3CB371" />
 
-            {/* Tree 2 (Mid-Left) */}
             <rect x="110" y="145" width="4" height="20" fill="#5C4033" />
             <path d="M95 148 L112 120 L129 148 Z" fill="#1C4D35" />
             <path d="M100 132 L112 110 L124 132 Z" fill="#2A6C4A" />
 
-            {/* Tree 3 (Right) */}
             <rect x="330" y="135" width="6" height="30" fill="#5C4033" />
             <path d="M305 140 L333 100 L361 140 Z" fill="#2E8B57" />
             <path d="M312 120 L333 85 L354 120 Z" fill="#3CB371" />
             <circle cx="350" cy="115" r="3" fill="var(--gold-primary)" />
 
-            {/* Tree 4 (Far-Right) */}
             <rect x="420" y="140" width="5" height="25" fill="#5C4033" />
             <path d="M400 144 L422.5 110 L445 144 Z" fill="#1E4620" />
             <path d="M407 125 L422.5 98 L438 125 Z" fill="#228B22" />
@@ -196,15 +208,12 @@ export default function CarbonTwin({ emissions = 400 }) {
 
         {state === 'medium' && (
           <g>
-            {/* Tree 1 (Left - partially lush) */}
             <rect x="60" y="135" width="5" height="25" fill="#7A6F4D" />
             <path d="M45 140 L62.5 105 L80 140 Z" fill="#5B7E58" />
             <path d="M50 120 L62.5 90 L75 120 Z" fill="#789675" />
 
-            {/* Tree 2 (Right - showing dry limbs) */}
             <rect x="350" y="135" width="5" height="25" fill="#7A6F4D" />
             <path d="M330 140 L352.5 110 L375 140 Z" fill="#5E6850" />
-            {/* Dry branches sticking out */}
             <path d="M352 125 L365 115" stroke="#7A6F4D" strokeWidth="1.5" />
             <path d="M352 130 L340 122" stroke="#7A6F4D" strokeWidth="1.5" />
           </g>
@@ -212,14 +221,12 @@ export default function CarbonTwin({ emissions = 400 }) {
 
         {state === 'high' && (
           <g>
-            {/* Bare Tree 1 (Left) */}
             <path d="M70 160 L70 115" stroke="#555" strokeWidth="3" strokeLinecap="round" />
             <path d="M70 140 L55 125" stroke="#555" strokeWidth="2" strokeLinecap="round" />
             <path d="M70 130 L85 118" stroke="#555" strokeWidth="2" strokeLinecap="round" />
             <path d="M85 118 L90 108" stroke="#555" strokeWidth="1.5" strokeLinecap="round" />
             <path d="M55 125 L50 128" stroke="#555" strokeWidth="1.5" strokeLinecap="round" />
 
-            {/* Bare Tree 2 (Right) */}
             <path d="M370 155 L370 110" stroke="#555" strokeWidth="2.5" strokeLinecap="round" />
             <path d="M370 135 L382 122" stroke="#555" strokeWidth="1.8" strokeLinecap="round" />
             <path d="M370 128 L358 116" stroke="#555" strokeWidth="1.8" strokeLinecap="round" />
@@ -239,3 +246,5 @@ export default function CarbonTwin({ emissions = 400 }) {
     </div>
   );
 }
+
+export default React.memo(CarbonTwin);

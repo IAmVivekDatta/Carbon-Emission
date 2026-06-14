@@ -5,33 +5,54 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 require('dotenv').config();
 
+// Validate Environment Variables immediately on startup
+const { validateEnv } = require('./config/env');
+validateEnv();
+
 const apiRoutes = require('./routes/api');
+const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Security Middlewares
-// Disable CSP in helmet to allow fonts, local styles, and inline script bundles from Vite
+// Configure Content Security Policy to secure endpoints without breaking fonts, local scripts, and styles
 app.use(helmet({
-  contentSecurityPolicy: false
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"]
+    }
+  }
 }));
 
-// CORS Configuration
+// CORS Configuration - Restrict to local development and same-origin requests in production
 const allowedOrigins = [
   'http://localhost:5173', // Vite local development
   'http://localhost:5000', // Express local server
 ];
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'production') {
-      return callback(null, true);
-    }
-    return callback(new Error('The CORS policy for this site does not allow access from the specified Origin.'), false);
-  },
-  credentials: true
-}));
+
+const corsOptionsDelegate = (req, callback) => {
+  let corsOptions;
+  const origin = req.header('Origin');
+  const host = req.header('Host');
+
+  const isSameOrigin = origin && (origin.replace(/^https?:\/\//, '') === host);
+  const isAllowedLocal = origin && allowedOrigins.includes(origin);
+
+  if (!origin || isSameOrigin || isAllowedLocal) {
+    corsOptions = { origin: true, credentials: true };
+  } else {
+    corsOptions = { origin: false };
+  }
+  callback(null, corsOptions);
+};
+
+app.use(cors(corsOptionsDelegate));
 
 // Request Parsers
 app.use(express.json());
@@ -83,15 +104,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // Global Error Handler
-app.use((err, req, res, next) => {
-  console.error('Unhandled Error:', err.message);
-  res.status(err.status || 500).json({
-    error: {
-      message: err.message || 'Internal Server Error',
-      status: err.status || 500
-    }
-  });
-});
+app.use(errorHandler);
 
 // Start listening if not imported as a module (e.g. for testing)
 if (require.main === module) {

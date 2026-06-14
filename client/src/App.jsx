@@ -1,9 +1,42 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import Navbar from './components/Navbar';
-import Landing from './pages/Landing';
-import Quiz from './pages/Quiz';
-import Dashboard from './pages/Dashboard';
 
+// Lazy-load page components to reduce initial bundle size
+// Each page is split into a separate chunk by Vite
+const Landing = lazy(() => import('./pages/Landing'));
+const Quiz = lazy(() => import('./pages/Quiz'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+
+/**
+ * Lightweight loading spinner shown during lazy-loaded page transitions.
+ * @returns {React.ReactElement}
+ */
+function PageLoader() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '60vh',
+        color: 'var(--text-secondary)',
+        fontSize: '1rem'
+      }}
+      aria-live="polite"
+      aria-label="Loading page content"
+    >
+      <span>Loading...</span>
+    </div>
+  );
+}
+
+/**
+ * Root application component managing global state and view routing.
+ * Uses useCallback to memoize all event handlers and prevent child re-renders.
+ * Pages are lazy-loaded for reduced initial bundle size.
+ *
+ * @returns {React.ReactElement}
+ */
 export default function App() {
   const [view, setView] = useState('landing');
   const [profileData, setProfileData] = useState(null);
@@ -21,25 +54,16 @@ export default function App() {
       const savedStreak = localStorage.getItem('verdant_pulse_streak');
       const savedCompleted = localStorage.getItem('verdant_pulse_completed');
       const savedLastLogged = localStorage.getItem('verdant_pulse_last_logged');
+      const savedCompletedChallenges = localStorage.getItem('verdant_pulse_completed_challenges');
+      const savedJoinedChallenges = localStorage.getItem('verdant_pulse_joined_challenges');
 
       if (savedProfile) {
         setProfileData(JSON.parse(savedProfile));
         setView('dashboard');
       }
-
-      if (savedCompleted) {
-        setCompletedActions(JSON.parse(savedCompleted));
-      }
-
-      const savedCompletedChallenges = localStorage.getItem('verdant_pulse_completed_challenges');
-      if (savedCompletedChallenges) {
-        setCompletedChallenges(JSON.parse(savedCompletedChallenges));
-      }
-
-      const savedJoinedChallenges = localStorage.getItem('verdant_pulse_joined_challenges');
-      if (savedJoinedChallenges) {
-        setJoinedChallenges(JSON.parse(savedJoinedChallenges));
-      }
+      if (savedCompleted) setCompletedActions(JSON.parse(savedCompleted));
+      if (savedCompletedChallenges) setCompletedChallenges(JSON.parse(savedCompletedChallenges));
+      if (savedJoinedChallenges) setJoinedChallenges(JSON.parse(savedJoinedChallenges));
 
       let activeStreak = 0;
       if (savedStreak) {
@@ -49,18 +73,10 @@ export default function App() {
 
       if (savedLastLogged) {
         setLastLoggedDate(savedLastLogged);
-        
-        // Check if streak has decayed (missed logging yesterday)
         const todayStr = new Date().toDateString();
-        const lastDate = new Date(savedLastLogged);
-        const todayDate = new Date(todayStr);
-        
-        // Calculate difference in days
-        const diffTime = Math.abs(todayDate - lastDate);
+        const diffTime = Math.abs(new Date(todayStr) - new Date(savedLastLogged));
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
         if (diffDays > 1 && savedLastLogged !== todayStr) {
-          // Streak expired, reset to 0
           setStreak(0);
           localStorage.setItem('verdant_pulse_streak', '0');
         }
@@ -70,24 +86,20 @@ export default function App() {
     }
   }, []);
 
-  // 2. Handle quiz form submission to backend Express API
-  const handleQuizSubmit = async (formData) => {
+  /**
+   * Submits quiz form data to the backend and saves the calculated carbon profile.
+   * @param {Object} formData - The quiz questionnaire answers
+   */
+  const handleQuizSubmit = useCallback(async (formData) => {
     setError('');
     try {
       const response = await fetch('/api/calculate', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       });
       const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to calculate footprint.');
-      }
-
-      // Save to React State & LocalStorage
+      if (!response.ok) throw new Error(data.error || 'Failed to calculate footprint.');
       setProfileData(data);
       localStorage.setItem('verdant_pulse_profile', JSON.stringify(data));
       setView('dashboard');
@@ -95,86 +107,77 @@ export default function App() {
       console.error('Quiz Submission Error:', err);
       setError(err.message || 'Server error. Please try again.');
     }
-  };
+  }, []);
 
-  // 3. Handle logging actions & updating streaks
-  const handleLogAction = (actionId, isLogged, savings) => {
-    const updatedCompleted = {
-      ...completedActions,
-      [actionId]: isLogged
-    };
+  /**
+   * Logs or un-logs an action and updates the daily streak accordingly.
+   * @param {string} actionId - Unique ID of the action
+   * @param {boolean} isLogged - Whether the action is being logged (true) or un-logged (false)
+   * @param {number} savings - Estimated CO2 savings in kg for this action
+   */
+  const handleLogAction = useCallback((actionId, isLogged, savings) => {
+    const updatedCompleted = { ...completedActions, [actionId]: isLogged };
     setCompletedActions(updatedCompleted);
     localStorage.setItem('verdant_pulse_completed', JSON.stringify(updatedCompleted));
 
-    // Streak Logic: If logging an action and no actions were checked for today
     const todayStr = new Date().toDateString();
-    
-    // Check if there are any other logged actions currently active
     const activeLogs = Object.entries(updatedCompleted).filter(([_, val]) => val);
-    
-    if (isLogged && activeLogs.length === 1) {
-      // First action logged today
-      let newStreak = streak;
 
+    if (isLogged && activeLogs.length === 1) {
+      let newStreak = streak;
       if (!lastLoggedDate) {
         newStreak = 1;
       } else {
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
         const yesterdayStr = yesterday.toDateString();
-
         if (lastLoggedDate === yesterdayStr) {
-          newStreak = streak + 1; // Consecutive days
+          newStreak = streak + 1;
         } else if (lastLoggedDate !== todayStr) {
-          newStreak = 1; // Broke streak, restart at 1
+          newStreak = 1;
         }
       }
-
       setStreak(newStreak);
       setLastLoggedDate(todayStr);
       localStorage.setItem('verdant_pulse_streak', newStreak.toString());
       localStorage.setItem('verdant_pulse_last_logged', todayStr);
-    } else if (!isLogged && activeLogs.length === 0) {
-      // If user unchecks ALL logged actions, we don't necessarily strip streak immediately 
-      // but let's keep the streak to encourage the user.
     }
-  };
+  }, [completedActions, streak, lastLoggedDate]);
 
-  // Handle joining a weekly challenge
-  const handleJoinChallenge = (challengeId, isJoined) => {
-    const updated = {
-      ...joinedChallenges,
-      [challengeId]: isJoined
-    };
+  /**
+   * Joins or leaves a weekly eco challenge.
+   * @param {string} challengeId - The challenge identifier
+   * @param {boolean} isJoined - Whether the user is joining (true) or leaving (false)
+   */
+  const handleJoinChallenge = useCallback((challengeId, isJoined) => {
+    const updated = { ...joinedChallenges, [challengeId]: isJoined };
     setJoinedChallenges(updated);
     localStorage.setItem('verdant_pulse_joined_challenges', JSON.stringify(updated));
-  };
+  }, [joinedChallenges]);
 
-  // Handle toggling completion of a weekly challenge
-  const handleToggleChallenge = (challengeId, isCompleted) => {
-    const updated = {
-      ...completedChallenges,
-      [challengeId]: isCompleted
-    };
+  /**
+   * Toggles the completion state of a weekly eco challenge.
+   * Automatically joins the challenge when marked complete.
+   * @param {string} challengeId - The challenge identifier
+   * @param {boolean} isCompleted - Whether the challenge is being completed (true) or undone (false)
+   */
+  const handleToggleChallenge = useCallback((challengeId, isCompleted) => {
+    const updated = { ...completedChallenges, [challengeId]: isCompleted };
     setCompletedChallenges(updated);
     localStorage.setItem('verdant_pulse_completed_challenges', JSON.stringify(updated));
-
-    // Also toggle join state to true if they completed it
     if (isCompleted && !joinedChallenges[challengeId]) {
       handleJoinChallenge(challengeId, true);
     }
-  };
+  }, [completedChallenges, joinedChallenges, handleJoinChallenge]);
 
-  // 4. Reset User Profile & Clear LocalStorage
-  const handleReset = () => {
+  /**
+   * Clears all profile data, streaks, and challenge states after user confirmation.
+   */
+  const handleReset = useCallback(() => {
     if (window.confirm('Are you sure you want to clear your carbon profile, logged habits, and challenges? This cannot be undone.')) {
-      localStorage.removeItem('verdant_pulse_profile');
-      localStorage.removeItem('verdant_pulse_streak');
-      localStorage.removeItem('verdant_pulse_completed');
-      localStorage.removeItem('verdant_pulse_last_logged');
-      localStorage.removeItem('verdant_pulse_completed_challenges');
-      localStorage.removeItem('verdant_pulse_joined_challenges');
-
+      ['verdant_pulse_profile', 'verdant_pulse_streak', 'verdant_pulse_completed',
+       'verdant_pulse_last_logged', 'verdant_pulse_completed_challenges', 'verdant_pulse_joined_challenges']
+        .forEach(key => localStorage.removeItem(key));
       setProfileData(null);
       setStreak(0);
       setCompletedActions({});
@@ -183,7 +186,7 @@ export default function App() {
       setLastLoggedDate(null);
       setView('landing');
     }
-  };
+  }, []);
 
   return (
     <>
@@ -199,6 +202,7 @@ export default function App() {
       {error && (
         <div 
           className="container" 
+          role="alert"
           style={{ 
             marginTop: '20px', 
             backgroundColor: '#FDF2F2', 
@@ -212,26 +216,28 @@ export default function App() {
         </div>
       )}
 
-      {view === 'landing' && (
-        <Landing onStartQuiz={() => setView('quiz')} />
-      )}
+      <Suspense fallback={<PageLoader />}>
+        {view === 'landing' && (
+          <Landing onStartQuiz={() => setView('quiz')} />
+        )}
 
-      {view === 'quiz' && (
-        <Quiz onSubmit={handleQuizSubmit} />
-      )}
+        {view === 'quiz' && (
+          <Quiz onSubmit={handleQuizSubmit} />
+        )}
 
-      {view === 'dashboard' && profileData && (
-        <Dashboard 
-          profileData={profileData} 
-          onLogAction={handleLogAction} 
-          completedActions={completedActions}
-          completedChallenges={completedChallenges}
-          onToggleChallenge={handleToggleChallenge}
-          joinedChallenges={joinedChallenges}
-          onJoinChallenge={handleJoinChallenge}
-          streak={streak}
-        />
-      )}
+        {view === 'dashboard' && profileData && (
+          <Dashboard 
+            profileData={profileData} 
+            onLogAction={handleLogAction} 
+            completedActions={completedActions}
+            completedChallenges={completedChallenges}
+            onToggleChallenge={handleToggleChallenge}
+            joinedChallenges={joinedChallenges}
+            onJoinChallenge={handleJoinChallenge}
+            streak={streak}
+          />
+        )}
+      </Suspense>
 
       <footer 
         style={{ 

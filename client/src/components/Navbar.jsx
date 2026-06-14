@@ -2,8 +2,17 @@ import React from 'react';
 
 /**
  * Navbar with logo, current view options, and active habit logging streak display.
+ * Wrapped in React.memo to prevent unnecessary re-renders when parent states change.
+ * 
+ * @component
+ * @param {Object} props - Component props
+ * @param {string} props.currentView - The active page view name
+ * @param {Function} props.setView - Callback function to change views
+ * @param {number} [props.streak=0] - Active daily logging streak count
+ * @param {Function} props.onReset - Callback function to reset profile data
+ * @returns {React.ReactElement} The Navbar header element
  */
-export default function Navbar({ currentView, setView, streak = 0, onReset }) {
+function Navbar({ currentView, setView, streak = 0, onReset }) {
   return (
     <header 
       style={{
@@ -123,3 +132,6 @@ export default function Navbar({ currentView, setView, streak = 0, onReset }) {
     </header>
   );
 }
+
+export default React.memo(Navbar);
+

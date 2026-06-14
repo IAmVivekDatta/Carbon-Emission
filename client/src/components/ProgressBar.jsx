@@ -1,9 +1,19 @@
 import React from 'react';
 
 /**
- * Reusable ProgressBar with calming green colors and accessibility values.
+ * Reusable, accessible ProgressBar with calming green colors.
+ * Wrapped in React.memo to prevent re-renders unless value/max changes.
+ *
+ * @component
+ * @param {Object} props
+ * @param {number} [props.value=0] - Current value
+ * @param {number} [props.max=100] - Maximum value
+ * @param {string} [props.height='8px'] - Bar height in CSS units
+ * @param {boolean} [props.showPercentage=false] - Whether to show percentage label
+ * @param {string} [props.label=''] - Accessible label text
+ * @returns {React.ReactElement}
  */
-export default function ProgressBar({ 
+function ProgressBar({ 
   value = 0, 
   max = 100, 
   height = '8px', 
@@ -48,3 +58,5 @@ export default function ProgressBar({
     </div>
   );
 }
+
+export default React.memo(ProgressBar);
